@@ -107,6 +107,7 @@ class SSSDUtils(MultihostUtility[MultihostHost]):
             """
             [sssd]
             services = nss, pam
+            user = sssd
             """
         )
 
