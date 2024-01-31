@@ -37,6 +37,9 @@ class ClientHost(BaseBackupHost):
 
         self.logger.info(f"Detecting SSSD's features on {self.hostname}")
 
+        tmp_dbg = self.ssh.run("rpm -qf /usr/share/man/man5/sssd.conf.5.gz")
+        self.logger.info(tmp_dbg)
+
         result = self.ssh.run(
             """
             set -ex
