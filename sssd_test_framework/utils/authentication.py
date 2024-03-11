@@ -378,6 +378,7 @@ class SUAuthenticationUtils(MultihostUtility[MultihostHost]):
                 echo 'exec /usr/libexec/sssd/passkey_child.orig $@' >> /usr/libexec/sssd/passkey_child
                 chmod 755 /usr/libexec/sssd/passkey_child
                 chmod -R a+rwx $UMOCKDEV_DIR
+                setfacl -m u:sssd:rw /dev/hidraw* || true
 
                 su --shell /bin/sh nobody -c "su - '{username}'"
                 """,
