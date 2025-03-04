@@ -9,7 +9,7 @@ from pytest_mh.cli import CLIBuilderArgs
 from pytest_mh.conn import ProcessResult
 
 from ..hosts.ipa import IPAHost
-from ..misc import attrs_include_value, attrs_parse, to_list, to_list_of_strings
+from ..misc import attrs_include_value, attrs_parse, to_list, to_list_of_strings, to_list_without_none
 from ..utils.sssctl import SSSCTLUtils
 from ..utils.sssd import SSSDUtils
 from .base import BaseLinuxRole, BaseObject
@@ -663,6 +663,233 @@ class IPAUser(IPAObject):
         self._exec("remove-passkey", [passkey_mapping])
         return self
 
+    def iduseroverride(self) -> IDUserOverride:
+        """
+        Add override to the IPA user.
+
+        .. code-block:: python
+            :caption: Example usage
+
+            @pytest.mark.topology(KnownTopology.IPA)
+            def test_example(client: Client, ipa: IPA):
+                ipa.idview("newview1").add(description="This is a new view")
+                ipa.idview("newview1").apply(hosts="client.test")
+                ipa.user("user-1").add().iduseroverride().add_override("newview1", uid=1344567)
+                client.sssd.restart()
+                lookup1 = client.tools.id("user-1")
+                assert lookup1.user.id == 1344567
+
+        :return: New IDOverride object.
+        :rtype: IDOverride
+        """
+        return IDUserOverride(self)
+
+
+class IDUserOverride(IPAUser):
+    """
+    IPA ID override for users.
+    """
+
+    def __init__(self, user: IPAUser) -> None:
+        """
+        :param user: IPA user object
+        :type user: IPAUser
+        """
+        super().__init__(user.role, user.name)
+        self.name = user.name
+
+    def add_override(
+        self,
+        idview_name: str,
+        *,
+        description: str | None = None,
+        login: str | None = None,
+        uid: int | None = None,
+        gid: int | None = None,
+        gecos: str | None = None,
+        home_directory: str | None = None,
+        shell: str | None = None,
+        sshpubkey: str | None = None,
+        certificate: str | list[str] | None = None,
+        **kwargs,
+    ) -> tuple[IDUserOverride, str]:
+        """
+        Add a new User ID override.
+
+        :param idview_name: Name of IDView.
+        :type idview_name: str
+        :param description: Description of the IDView.
+        :type description: str | None, defaults to None
+        :param login: User login of the IDView.
+        :type login: str | None, defaults to None
+        :param uid: User ID number of the IDView.
+        :type uid: str | None, defaults to None
+        :param gid: Group ID of the IDView.
+        :type gid: str | None, defaults to None
+        :param gecos: Gecos of the IDView.
+        :type gecos: str | None, defaults to None
+        :param home_directory: Home directory of the IDView.
+        :type home_directory: str | None, defaults to None
+        :param shell: Login shell of the IDView.
+        :type shell: str | None, defaults to None
+        :param sshpubkey: SSH public key of the IDView.
+        :type sshpubkey: str | None, defaults to None
+        :param certificate: Certificate of the IDView.
+        :type certificate: str | list[str] | None, defaults to None
+        :retun: self, str
+        :rtype: IDUserOverride, str
+        """
+        certs = [certificate] if isinstance(certificate, str) else certificate or []
+
+        valid_keys = {"desc", "login", "uid", "gidnumber", "gecos", "homedir", "shell", "sshpubkey", "certificate"}
+
+        attrs: CLIBuilderArgs = {
+            "desc": (self.cli.option.VALUE, description),
+            "login": (self.cli.option.VALUE, login),
+            "uid": (self.cli.option.VALUE, uid),
+            "gidnumber": (self.cli.option.VALUE, gid),
+            "gecos": (self.cli.option.VALUE, gecos),
+            "homedir": (self.cli.option.VALUE, home_directory),
+            "shell": (self.cli.option.VALUE, shell),
+            "sshpubkey": (self.cli.option.VALUE, sshpubkey),
+        }
+
+        # Get string of invalid options for testing negative test cases
+        # options like email, principle, first_name, last_name etc.
+        invalid_keys = ", ".join([key for key in kwargs if key not in valid_keys])
+
+        for key, value in kwargs.items():
+            if key in valid_keys:
+                attrs[key] = (self.cli.option.VALUE, value)
+
+        # Create the ID override first
+        self.role.host.conn.exec(
+            ["ipa", "idoverrideuser-add", idview_name, self.name] + to_list_without_none(self.cli.args(attrs))
+        )
+
+        # Add certificates if any exist
+        if certs:
+            cert_cmd = ["ipa", "idoverrideuser-add-cert", idview_name, self.name]
+            for cert in certs:
+                self.role.host.conn.exec(cert_cmd + [f"--certificate={cert}"])
+
+        return self, invalid_keys
+
+    def modify_override(
+        self,
+        idview_name: str,
+        *,
+        description: str | None = None,
+        login: str | None = None,
+        uid: int | None = None,
+        gid: int | None = None,
+        gecos: str | None = None,
+        home_directory: str | None = None,
+        shell: str | None = None,
+        sshpubkey: str | None = None,
+        certificate: str | list[str] | None = None,
+    ) -> IDUserOverride:
+        """
+        Modify an User ID override.
+
+        :param idview_name: Name of IDView.
+        :type idview_name: str
+        :param description: Description of the IDView.
+        :type description: str | None, defaults to None
+        :param login: User login of the IDView.
+        :type login: str | None, defaults to None
+        :param uid: User ID number of the IDView.
+        :type uid: str | None, defaults to None
+        :param gid: Group ID of the IDView.
+        :type gid: str | None, defaults to None
+        :param gecos: Gecos of the IDView.
+        :type gecos: str | None, defaults to None
+        :param home_directory: Home directory of the IDView.
+        :type home_directory: str | None, defaults to None
+        :param shell: Login shell of the IDView.
+        :type shell: str | None, defaults to None
+        :param sshpubkey: SSH public key of the IDView.
+        :type sshpubkey: str | None, defaults to None
+        :param certificate: Certificate of the IDView.
+        :type certificate: str | list[str] | None, defaults to None
+        :return: self
+        :rtype: IDUserOverride
+        """
+
+        attrs: CLIBuilderArgs = {
+            "desc": (self.cli.option.VALUE, description),
+            "login": (self.cli.option.VALUE, login),
+            "uid": (self.cli.option.VALUE, uid),
+            "gidnumber": (self.cli.option.VALUE, gid),
+            "gecos": (self.cli.option.VALUE, gecos),
+            "homedir": (self.cli.option.VALUE, home_directory),
+            "shell": (self.cli.option.VALUE, shell),
+            "sshpubkey": (self.cli.option.VALUE, sshpubkey),
+            "certificate": (self.cli.option.VALUE, certificate),
+        }
+
+        attrs = CLIBuilderArgs(attrs)
+        self.role.host.conn.exec(
+            ["ipa", "idoverrideuser-mod", idview_name, self.name] + to_list_without_none(self.cli.args(attrs))
+        )
+
+        return self
+
+    def delete_override(self, idview_name: str) -> IDUserOverride:
+        """
+        Delete an User ID override.
+
+        :param idview_name: Name of IDView.
+        :type idview_name: str
+        :return: self
+        :rtype: IDOverride
+        """
+
+        self.role.host.conn.exec(["ipa", "idoverrideuser-del", "--continue", idview_name, self.name])
+        return self
+
+    def remove_cert(self, idview_name: str, certificate: str | list[str]) -> IDUserOverride:
+        """
+        Remove one or more certificates to the idoverrideuser entry
+
+        :param idview_name: Name of IDView.
+        :type idview_name: str
+        :param certificate: Certificate of the IDView.
+        :type certificate: str | list[str]
+        :return: self.
+        :rtype: IDOverride
+        """
+        self.role.host.conn.exec(
+            ["ipa", "idoverrideuser-remove-cert", idview_name, self.name, f"--certificate={certificate}"]
+        )
+        return self
+
+    def find_override(self, idview_name: str) -> list[str]:
+        """
+        Search for an User ID override.
+
+        :param idview_name: Name of IDView.
+        :type idview_name: str
+        :return: list of IDOverride information.
+        :rtype: list[str]
+        """
+        result = self.role.host.conn.exec(["ipa", "idoverrideuser-find", idview_name, "--anchor", self.name])
+        cleaned_list = [line for line in result.stdout.splitlines() if "-" not in line]
+        return cleaned_list
+
+    def show_override(self, idview_name: str) -> list[str]:
+        """
+        Display information about an User ID override.
+
+        :param idview_name: Name of IDView.
+        :type idview_name: str
+        :return: list of IDOverride information.
+        :rtype: list[str]
+        """
+        result = self.role.host.conn.exec(["ipa", "idoverrideuser-show", idview_name, self.name, "--all"])
+        cleaned_list = [item.strip() for item in result.stdout.splitlines()]
+        return cleaned_list
+
 
 class IPAGroup(IPAObject):
     """
@@ -801,6 +1028,144 @@ class IPAGroup(IPAObject):
         groups = [x for item in members if isinstance(item, IPAGroup) for x in ("--groups", item.name)]
         external = [x for item in members if isinstance(item, str) for x in ("--external", item)]
         return [*users, *groups, *external]
+
+    def idgroupoverride(self) -> IDGroupOverride:
+        """
+        Add override to the IPA Group.
+
+        .. code-block:: python
+            :caption: Example usage
+
+            @pytest.mark.topology(KnownTopology.IPA)
+            def test_example(client: Client, ipa: IPA):
+                ipa.idview("newview1").add(description="This is a new view")
+                ipa.idview("newview1").apply(hosts=f"{client.host.hostname}")
+                ipa.group("group-1").add().idgroupoverride().add_override("newview1", gid=1344567)
+                client.sssd.restart()
+                g_lookup = client.tools.getent.group("group-1")
+                assert g_lookup.gid == 1344567
+
+        :return: New IDOverride object.
+        :rtype: IDOverride
+        """
+        return IDGroupOverride(self)
+
+
+class IDGroupOverride(IPAGroup):
+    """
+    IPA group ID override
+    """
+
+    def __init__(self, group: IPAGroup) -> None:
+        """
+        :param user: IPA group object
+        :type user: IPAGroup
+        """
+        super().__init__(group.role, group.name)
+        self.name = group.name
+
+    def add_override(
+        self,
+        idview_name: str,
+        *,
+        description: str | None = None,
+        group_name: str | None = None,
+        gid: int | None = None,
+    ) -> IDGroupOverride:
+        """
+        Add a new Group ID override.
+
+        :param idview_name: Name of IDView.
+        :type idview_name: str
+        :param description: Description of the IDView.
+        :type description: str | None, defaults to None.
+        :param group_name: Name of the IDView.
+        :type group_name: str | None, defaults to None.
+        :param gid: GID of the IDView.
+        :type gid: str | None, defaults to None.
+        :return: self.
+        :rtype: IDGroupOverride
+        """
+
+        attrs: CLIBuilderArgs = {
+            "desc": (self.cli.option.VALUE, description),
+            "group-name": (self.cli.option.VALUE, group_name),
+            "gid": (self.cli.option.VALUE, gid),
+        }
+
+        self.role.host.conn.exec(["ipa", "idoverridegroup-add", idview_name, self.name] + list(self.cli.args(attrs)))
+        return self
+
+    def modify_override(
+        self,
+        idview_name: str,
+        *,
+        description: str | None = None,
+        group_name: str | None = None,
+        gid: int | None = None,
+    ) -> IDGroupOverride:
+        """
+        Modify an Group ID override.
+
+        :param idview_name: Name of IDView.
+        :type idview_name: str
+        :param description: Description of the IDView.
+        :type description: str | None, defaults to None
+        :param group_name: group name of the IDView.
+        :type group_name: str | None, defaults to None
+        :param gid: GID of the IDView.
+        :type gid: str | None, defaults to None
+        :return: self.
+        :rtype: IDGroupOverride
+        """
+
+        attrs: CLIBuilderArgs = {
+            "desc": (self.cli.option.VALUE, description),
+            "group-name": (self.cli.option.VALUE, group_name),
+            "gid": (self.cli.option.VALUE, gid),
+        }
+        attrs = CLIBuilderArgs(attrs)
+        self.role.host.conn.exec(["ipa", "idoverridegroup-mod", idview_name, self.name] + list(self.cli.args(attrs)))
+
+        return self
+
+    def delete_override(self, idview_name: str) -> IDGroupOverride:
+        """
+        Delete an Group ID override.
+        :param idview_name: Name of IDView.
+        :type idview_name: str
+        :return: self.
+        :rtype: IDGroupOverride
+        """
+
+        self.role.host.conn.exec(["ipa", "idoverridegroup-del", "--continue", idview_name, self.name])
+        return self
+
+    def find_override(self, idview_name: str) -> list[str]:
+        """
+        Search for an Group ID override.
+
+        :param idview_name: Name of IDView.
+        :type: idview_name: str
+        :return: List of ID override.
+        :rtype: list[str]
+        """
+        find_result = self.role.host.conn.exec(["ipa", "idoverridegroup-find", idview_name, "--anchor", self.name])
+        cleaned_list = [line for line in find_result.stdout.splitlines() if "-" not in line]
+        return cleaned_list
+
+    def show_override(self, idview_name: str) -> list[str]:
+        """
+        Display information about an Group ID override.
+
+        :param idview_name: Name of IDView.
+        :type idview_name: str
+        :return: list of IDOverride information.
+        :rtype: list[str]
+        """
+        show_result = self.role.host.conn.exec(["ipa", "idoverridegroup-show", idview_name, self.name, "--all"])
+        cleaned_list = [item.strip() for item in show_result.stdout.splitlines()]
+        return cleaned_list
 
 
 class IPANetgroup(IPAObject):
